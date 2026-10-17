@@ -1,0 +1,1773 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Lecteur Partition & Métronome iPad</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0c0e14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Partitions">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+
+  <!-- PDF.js en local (plus de CDN) -->
+  <script src="vendor/pdf.min.js"></script>
+
+  <style>
+    :root {
+      --bg-main: #0c0e14;
+      --bg-panel: #141720;
+      --bg-control: #202434;
+      --text-main: #f0f3fa;
+      --text-muted: #7e869c;
+      --accent: #3d68ff;
+      --accent-bright: #688aff;
+      --led-green: #00e676;
+      --led-green-glow: rgba(0, 230, 118, 0.7);
+      --led-red: #ff334b;
+      --led-red-glow: rgba(255, 51, 75, 0.7);
+      --border-color: #24293a;
+
+      --pad-off-bg: rgba(255, 255, 255, 0.05);
+      --pad-off-border: rgba(255, 255, 255, 0.12);
+      --pad-beat1-bg: #00bcd4;
+      --pad-beat1-glow: rgba(0, 188, 212, 0.4);
+      --pad-sub-bg: #4a72e8;
+      --pad-sub-glow: rgba(74, 114, 232, 0.3);
+
+      --txt-dark-bg: #141720;
+      --txt-dark-color: #e4e9f5;
+      --chord-color: #38bdf8;
+
+      --txt-light-bg: #f8fafc;
+      --txt-light-color: #0f172a;
+      --chord-color-light: #0284c7;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      height: 100vh;
+      height: 100dvh;
+      width: 100vw;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ZONE AFFICHAGE PRINCIPALE */
+    .viewer-pane {
+      flex: 1;
+      height: 100vh;
+      height: 100dvh;
+      position: relative;
+      background: var(--bg-panel);
+      border-right: 1px solid var(--border-color);
+      display: flex;
+      overflow: auto;
+      overscroll-behavior: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* Conteneur PDF : une seule page affichée à la fois */
+    .pdf-pages-container {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      margin: auto;
+      transition: filter 0.25s ease;
+    }
+
+    .pdf-pages-container.dark-theme canvas {
+      filter: invert(0.88) sepia(0.08) hue-rotate(185deg) brightness(0.88) contrast(0.96);
+    }
+
+    .pdf-page-wrapper {
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+      background: #fff;
+    }
+
+    .pdf-page-wrapper canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    /* VUE FICHIER TXT PAGINÉE */
+    .txt-viewer-container {
+      display: none;
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      padding: 1.5rem 1.8rem;
+      background: var(--txt-dark-bg);
+      color: var(--txt-dark-color);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-weight: 450;
+      font-size: 22px;
+      line-height: 1.25;
+      letter-spacing: 0.1px;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .txt-viewer-container.light-theme {
+      background: var(--txt-light-bg);
+      color: var(--txt-light-color);
+    }
+
+    .txt-clip {
+      overflow: hidden;
+      margin: 0 auto;
+    }
+
+    .txt-content {
+      column-fill: auto;
+      will-change: transform;
+    }
+
+    .txt-viewer-container.two-columns .txt-content {
+      column-rule: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .txt-viewer-container.light-theme.two-columns .txt-content {
+      column-rule: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    .txt-stanza {
+      break-inside: avoid;
+      page-break-inside: avoid;
+      margin-bottom: 1em;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+
+    /* ACCORDS FLOTTANTS COMPACTS */
+    .chord-unit {
+      display: inline-flex;
+      flex-direction: column;
+      vertical-align: bottom;
+      position: relative;
+      margin-top: 0.65em;
+    }
+
+    .chord-name {
+      font-size: 0.70em;
+      font-weight: 700;
+      color: var(--chord-color);
+      line-height: 1;
+      height: 0.95em;
+      white-space: nowrap;
+      user-select: none;
+      -webkit-user-select: none;
+      letter-spacing: 0.2px;
+      margin-bottom: 1px;
+    }
+
+    .txt-viewer-container.light-theme .chord-name {
+      color: var(--chord-color-light);
+    }
+
+    .chord-lyric {
+      line-height: 1.22;
+      white-space: pre-wrap;
+    }
+
+    .txt-viewer-container.hide-chords .chord-name {
+      display: none !important;
+    }
+
+    .txt-viewer-container.hide-chords .chord-unit {
+      margin-top: 0 !important;
+      display: inline !important;
+    }
+
+    .empty-state {
+      margin: auto;
+      text-align: center;
+      max-width: 360px;
+      padding: 2rem;
+      border: 2px dashed var(--border-color);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .empty-state-icon {
+      font-size: 3rem;
+      margin-bottom: 0.8rem;
+    }
+
+    .empty-state p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      margin-bottom: 1.2rem;
+      line-height: 1.4;
+    }
+
+    /* BANDEAU LATÉRAL ULTRA-COMPACT (110px) */
+    .compact-sidebar {
+      width: 110px;
+      height: 100vh;
+      height: 100dvh;
+      background: var(--bg-panel);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: calc(env(safe-area-inset-top, 0px) + 16px);
+      padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+      padding-left: 0.5rem;
+      padding-right: 0.5rem;
+      gap: 2px;
+      z-index: 5;
+    }
+
+    .section-metronome {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .status-row {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 1px 0;
+    }
+
+    .status-led {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--led-red);
+      box-shadow: 0 0 6px var(--led-red-glow);
+      transition: all 0.25s;
+    }
+
+    .status-led.found {
+      background: var(--led-green);
+      box-shadow: 0 0 8px var(--led-green-glow);
+    }
+
+    .status-text {
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    .quick-toggles-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      width: 100%;
+      margin-bottom: 2px;
+    }
+
+    .btn-quick-toggle {
+      height: 30px;
+      background: var(--bg-control);
+      border: 1px solid var(--border-color);
+      border-radius: 7px;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      opacity: 0.55;
+      transition: all 0.15s ease;
+    }
+
+    .btn-quick-toggle.active {
+      opacity: 1;
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .btn-quick-toggle:active {
+      transform: scale(0.96);
+      background: #2f354c;
+    }
+
+    .btn-signature {
+      width: 100%;
+      height: 26px;
+      background: var(--bg-control);
+      color: var(--accent-bright);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+    }
+
+    .btn-signature:active {
+      background: #2f354c;
+    }
+
+    .beat-matrix {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 6px 4px;
+      background: #171a24;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      margin: 1px 0;
+      min-height: 78px;
+    }
+
+    .beat-row {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      align-items: center;
+      width: 100%;
+    }
+
+    .beat-pad {
+      border-radius: 5px;
+      background: var(--pad-off-bg);
+      border: 1px solid var(--pad-off-border);
+      transition: background-color 0.04s, box-shadow 0.04s, border-color 0.04s;
+      flex-shrink: 0;
+    }
+
+    .beat-pad.active-accent {
+      background: var(--pad-beat1-bg);
+      box-shadow: 0 0 10px var(--pad-beat1-glow);
+      border-color: #66e6f5;
+    }
+
+    .beat-pad.active-sub {
+      background: var(--pad-sub-bg);
+      box-shadow: 0 0 8px var(--pad-sub-glow);
+      border-color: #7b9cff;
+    }
+
+    .bpm-display {
+      text-align: center;
+      line-height: 1;
+    }
+
+    .bpm-value {
+      font-size: 1.2rem;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.5px;
+    }
+
+    .bpm-unit {
+      font-size: 0.52rem;
+      color: var(--text-muted);
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+
+    .stepper-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3px;
+      width: 100%;
+    }
+
+    .btn-step {
+      background: var(--bg-control);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 5px 0;
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .btn-step:active {
+      background: #2f354c;
+    }
+
+    .btn-play-toggle {
+      width: 100%;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 0;
+      font-size: 1.1rem;
+      font-weight: bold;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow: 0 3px 8px rgba(61, 104, 255, 0.35);
+    }
+
+    .btn-play-toggle.running {
+      background: #e63946;
+      box-shadow: 0 3px 8px rgba(230, 57, 70, 0.4);
+    }
+
+    .separator {
+      width: 100%;
+      height: 1px;
+      background: var(--border-color);
+      margin: 1px 0;
+    }
+
+    .section-view-controls {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .transpose-grid {
+      display: grid;
+      grid-template-columns: 1fr 1.2fr 1fr;
+      gap: 3px;
+      width: 100%;
+      height: 28px;
+    }
+
+    .btn-transpose {
+      background: var(--bg-control);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .btn-transpose:active {
+      background: #2f354c;
+    }
+
+    .transpose-display {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 800;
+      color: var(--accent-bright);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .transpose-grid.disabled {
+      opacity: 0.25;
+      pointer-events: none;
+    }
+
+    .chords-toggle-btn,
+    .columns-toggle-btn,
+    .crop-toggle-btn {
+      width: 100%;
+      height: 28px;
+      background: var(--bg-control);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .chords-toggle-btn.active {
+      background: rgba(56, 189, 248, 0.18);
+      border-color: var(--chord-color);
+      color: var(--chord-color);
+    }
+
+    .columns-toggle-btn.active,
+    .crop-toggle-btn.active {
+      background: rgba(61, 104, 255, 0.2);
+      border-color: var(--accent);
+      color: #9ab4ff;
+    }
+
+    .chords-toggle-btn:disabled,
+    .columns-toggle-btn:disabled,
+    .crop-toggle-btn:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+
+    .zoom-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3px;
+      width: 100%;
+    }
+
+    .btn-zoom {
+      height: 28px;
+      background: var(--bg-control);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .btn-zoom:active {
+      background: #2f354c;
+    }
+
+    .section-files-stacked {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .btn-stacked {
+      width: 100%;
+      height: 33px;
+      background: var(--bg-control);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      font-size: 1.1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.1s ease;
+    }
+
+    .btn-stacked:active:not(:disabled) {
+      background: var(--accent);
+      border-color: var(--accent-bright);
+    }
+
+    .btn-stacked:disabled {
+      opacity: 0.25;
+      cursor: not-allowed;
+    }
+
+    .btn-stacked.btn-info {
+      font-family: serif;
+      font-style: italic;
+      font-weight: 800;
+      font-size: 1.2rem;
+      color: var(--accent-bright);
+    }
+
+    .file-counter-inline {
+      width: 100%;
+      text-align: center;
+      font-size: 0.65rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      letter-spacing: 0.3px;
+      padding: 1px 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+
+    .modal-overlay.open {
+      display: flex;
+    }
+
+    .modal-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      width: 90%;
+      max-width: 520px;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+      overflow: hidden;
+      animation: modalPop 0.2s cubic-bezier(0.1, 0.9, 0.2, 1);
+    }
+
+    @keyframes modalPop {
+      from { transform: scale(0.95); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    .modal-header {
+      padding: 1rem 1.2rem;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+    }
+
+    .btn-close-modal {
+      background: var(--bg-control);
+      border: none;
+      color: var(--text-muted);
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      font-size: 1.1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .modal-body {
+      padding: 0.6rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .playlist-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .playlist-item {
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid transparent;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      font-size: 0.95rem;
+      transition: all 0.15s ease;
+    }
+
+    .playlist-item:hover, .playlist-item:active {
+      background: var(--bg-control);
+    }
+
+    .playlist-item.active {
+      background: rgba(61, 104, 255, 0.15);
+      border-color: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+
+    .item-index {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      width: 26px;
+    }
+
+    .playlist-item.active .item-index {
+      color: var(--accent-bright);
+    }
+
+    .item-name {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    button {
+      cursor: pointer;
+      font-family: inherit;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 1. ZONE AFFICHAGE -->
+  <main class="viewer-pane" id="pdfTouchArea">
+    <div class="empty-state" id="emptyState">
+      <div class="empty-state-icon">🎼</div>
+      <p id="emptyStateText">Touchez <strong>📁</strong> dans la barre latérale pour charger vos partitions ou textes (PDF et TXT).</p>
+      <button class="btn-step" onclick="document.getElementById('folderInput').click()" style="width: auto; padding: 10px 18px; font-size: 0.95rem; margin: auto; background: var(--accent);">
+        📁 Ouvrir un dossier
+      </button>
+    </div>
+
+    <!-- PDF : une page à la fois -->
+    <div class="pdf-pages-container dark-theme" id="pdfContainer"></div>
+
+    <!-- TXT paginé -->
+    <div class="txt-viewer-container two-columns" id="txtContainer">
+      <div class="txt-clip" id="txtClip">
+        <div class="txt-content" id="txtContent"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 2. BANDEAU LATÉRAL -->
+  <aside class="compact-sidebar">
+
+    <div class="section-metronome">
+      <div class="status-row">
+        <div id="tempoLed" class="status-led" title="Rouge: tempo non détecté | Vert: synchronisé"></div>
+        <span class="status-text">Tempo</span>
+      </div>
+
+      <div class="quick-toggles-grid">
+        <button id="themeBtn" class="btn-quick-toggle active" onclick="toggleTheme()" title="Mode Sombre / Clair">🌙</button>
+        <button id="soundBtn" class="btn-quick-toggle" onclick="toggleSound()" title="Clic audio On / Off">🔇</button>
+      </div>
+
+      <button id="sigBtn" class="btn-signature" onclick="cycleSignatureManual()" title="Changer la métrique">4/4</button>
+
+      <div class="beat-matrix" id="beatMatrix" onclick="togglePlay()" title="Lancer / Stopper">
+        <div class="beat-row" id="beatRow1"></div>
+        <div class="beat-row" id="beatRow2"></div>
+      </div>
+
+      <div class="bpm-display">
+        <div class="bpm-value" id="bpmValue">90</div>
+        <div class="bpm-unit">BPM</div>
+      </div>
+
+      <div class="stepper-grid">
+        <button class="btn-step" onclick="adjustBpm(-1)">-1</button>
+        <button class="btn-step" onclick="adjustBpm(+1)">+1</button>
+        <button class="btn-step" onclick="adjustBpm(-5)">-5</button>
+        <button class="btn-step" onclick="adjustBpm(+5)">+5</button>
+      </div>
+
+      <button id="playBtn" class="btn-play-toggle" onclick="togglePlay()" title="Lecture / Pause">▶</button>
+    </div>
+
+    <div class="separator"></div>
+
+    <div class="section-view-controls">
+      <div class="transpose-grid" id="transposeRow">
+        <button class="btn-transpose" onclick="adjustTranspose(-1)" title="Transposer d'un demi-ton vers le bas">♭</button>
+        <span class="transpose-display" id="transposeDisplay" onclick="resetTranspose()" title="Tonalité d'origine (toucher pour réinitialiser)">0</span>
+        <button class="btn-transpose" onclick="adjustTranspose(+1)" title="Transposer d'un demi-ton vers le haut">♯</button>
+      </div>
+
+      <button id="chordsToggleBtn" class="chords-toggle-btn active" onclick="toggleChords()" title="Afficher / Masquer les accords (TXT)">Chords</button>
+      <button id="columnsBtn" class="columns-toggle-btn active" onclick="toggleColumns()" title="Basculer 1 col / 2 col (TXT)">2 Col</button>
+      <button id="cropBtn" class="crop-toggle-btn active" onclick="toggleCrop()" title="Rogner les marges blanches (PDF)">✂ Crop</button>
+
+      <div class="zoom-grid">
+        <button class="btn-zoom" onclick="adjustZoom(-1)" title="Zoom −">🔍−</button>
+        <button class="btn-zoom" onclick="adjustZoom(+1)" title="Zoom +">🔍+</button>
+      </div>
+    </div>
+
+    <div class="separator"></div>
+
+    <div class="section-files-stacked">
+      <button class="btn-stacked" onclick="document.getElementById('fileInput').click()" title="Ouvrir un fichier (PDF ou TXT)">📄</button>
+      <button class="btn-stacked" onclick="document.getElementById('folderInput').click()" title="Ouvrir un dossier">📁</button>
+
+      <div class="file-counter-inline" id="fileCounter">-- / --</div>
+
+      <button class="btn-stacked btn-info" onclick="openFileListModal()" title="Liste des partitions">i</button>
+      <button class="btn-stacked" id="prevBtn" onclick="navigateFile(-1)" disabled title="Document précédent">▲</button>
+      <button class="btn-stacked" id="nextBtn" onclick="navigateFile(+1)" disabled title="Document suivant">▼</button>
+
+      <input type="file" id="folderInput" webkitdirectory directory multiple style="display: none;">
+      <input type="file" id="fileInput" accept=".pdf, .txt, text/plain, application/pdf" multiple style="display: none;">
+    </div>
+
+  </aside>
+
+  <!-- 3. MODAL LISTE -->
+  <div class="modal-overlay" id="fileModal" onclick="handleModalOverlayClick(event)">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title" id="modalTitle">Fichiers chargés (0)</div>
+        <button class="btn-close-modal" onclick="closeFileListModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <ul class="playlist-list" id="playlistUl"></ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
+
+    // ---------- ÉTAT GLOBAL ----------
+    let pdfPlaylist = [];
+    let currentIndex = -1;
+    let isDarkTheme = true;
+    let isCropEnabled = true;
+    let isTwoColumns = true;
+    let isChordsVisible = true;
+
+    let currentFileType = null;
+    let loadToken = 0;
+
+    // PDF
+    let currentPdfDoc = null;
+    let pdfNumPages = 0;
+    let pdfPageIndex = 0;
+    let currentPdfZoom = 1.0;
+    let renderToken = 0;
+    let currentRenderTask = null;
+    const cropCaches = new WeakMap();
+    const MAX_CANVAS_PIXELS = 10e6;
+
+    // TXT
+    let currentTxtFontSize = 22;
+    let currentTxtRawContent = "";
+    let currentTransposeSemitones = 0;
+    let txtPage = 0;
+    let txtPageCount = 1;
+    let txtStride = 0;
+
+    let currentSignature = { top: 4, bottom: 4, name: "4/4" };
+    const MANUAL_SIGNATURES = [
+      { top: 4, bottom: 4, name: "4/4" },
+      { top: 3, bottom: 4, name: "3/4" },
+      { top: 2, bottom: 4, name: "2/4" },
+      { top: 6, bottom: 8, name: "6/8" }
+    ];
+
+    const folderInput = document.getElementById('folderInput');
+    const fileInput = document.getElementById('fileInput');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const fileCounter = document.getElementById('fileCounter');
+
+    const viewerPane = document.getElementById('pdfTouchArea');
+    const pdfContainer = document.getElementById('pdfContainer');
+    const txtContainer = document.getElementById('txtContainer');
+    const txtClip = document.getElementById('txtClip');
+    const txtContent = document.getElementById('txtContent');
+    const emptyState = document.getElementById('emptyState');
+    const emptyStateText = document.getElementById('emptyStateText');
+
+    const tempoLed = document.getElementById('tempoLed');
+    const themeBtn = document.getElementById('themeBtn');
+    const cropBtn = document.getElementById('cropBtn');
+    const columnsBtn = document.getElementById('columnsBtn');
+    const chordsToggleBtn = document.getElementById('chordsToggleBtn');
+    const sigBtn = document.getElementById('sigBtn');
+    const beatRow1 = document.getElementById('beatRow1');
+    const beatRow2 = document.getElementById('beatRow2');
+
+    const transposeRow = document.getElementById('transposeRow');
+    const transposeDisplay = document.getElementById('transposeDisplay');
+
+    const fileModal = document.getElementById('fileModal');
+    const playlistUl = document.getElementById('playlistUl');
+    const modalTitle = document.getElementById('modalTitle');
+
+    let beatIndexToPad = [];
+    let allPadsList = [];
+
+    // ---------- COMPTEUR FICHIER / PAGE ----------
+    function updateCounter() {
+      if (currentIndex < 0) return;
+      const base = `${currentIndex + 1}/${pdfPlaylist.length}`;
+      if (currentFileType === 'txt') {
+        fileCounter.textContent = `${base} · p${txtPage + 1}/${txtPageCount}`;
+      } else if (currentFileType === 'pdf') {
+        fileCounter.textContent = `${base} · p${pdfPageIndex + 1}/${Math.max(pdfNumPages, 1)}`;
+      }
+    }
+
+    // ---------- CHORDS ----------
+    function toggleChords() {
+      if (currentFileType !== 'txt') return;
+      isChordsVisible = !isChordsVisible;
+      chordsToggleBtn.classList.toggle('active', isChordsVisible);
+      txtContainer.classList.toggle('hide-chords', !isChordsVisible);
+      paginateTxt(true);
+    }
+
+    // ---------- MATRICE DE TEMPS ----------
+    function setupBeatMatrix(sig) {
+      beatRow1.innerHTML = '';
+      beatRow2.innerHTML = '';
+      beatIndexToPad = [];
+      allPadsList = [];
+
+      const totalBeats = sig.top;
+      sigBtn.textContent = sig.name;
+
+      const row1Count = Math.floor(totalBeats / 2);
+      const row2Count = Math.ceil(totalBeats / 2);
+
+      const maxInRow = Math.max(row1Count, row2Count);
+      let padSize = 34;
+      let padGap = 8;
+
+      if (maxInRow === 3) { padSize = 24; padGap = 6; }
+      else if (maxInRow >= 4) { padSize = 18; padGap = 4; }
+
+      beatRow1.style.gap = `${padGap}px`;
+      beatRow2.style.gap = `${padGap}px`;
+
+      const row1Pads = [];
+      for (let i = 0; i < row1Count; i++) {
+        const pad = document.createElement('div');
+        pad.className = 'beat-pad';
+        pad.style.width = `${padSize}px`;
+        pad.style.height = `${padSize}px`;
+        beatRow1.appendChild(pad);
+        row1Pads.push(pad);
+        allPadsList.push(pad);
+      }
+
+      const row2Pads = [];
+      for (let i = 0; i < row2Count; i++) {
+        const pad = document.createElement('div');
+        pad.className = 'beat-pad';
+        pad.style.width = `${padSize}px`;
+        pad.style.height = `${padSize}px`;
+        beatRow2.appendChild(pad);
+        row2Pads.push(pad);
+        allPadsList.push(pad);
+      }
+
+      for (let i = 0; i < row1Count; i++) beatIndexToPad.push(row1Pads[i]);
+      for (let i = row2Count - 1; i >= 0; i--) beatIndexToPad.push(row2Pads[i]);
+    }
+
+    function cycleSignatureManual() {
+      const idx = MANUAL_SIGNATURES.findIndex(s => s.name === currentSignature.name);
+      const nextIdx = (idx + 1) % MANUAL_SIGNATURES.length;
+      setSignature(MANUAL_SIGNATURES[nextIdx]);
+    }
+
+    function setSignature(sig) {
+      currentSignature = sig;
+      currentBeatInMeasure = currentBeatInMeasure % sig.top;
+      setupBeatMatrix(sig);
+    }
+
+    // ---------- TRANSPOSITION ----------
+    const SHARP_SCALE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const FLAT_SCALE  = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+    const NOTE_TO_INDEX = {
+      'C': 0, 'C#': 1, 'DB': 1, 'Db': 1,
+      'D': 2, 'D#': 3, 'EB': 3, 'Eb': 3,
+      'E': 4, 'FB': 4, 'E#': 5,
+      'F': 5, 'F#': 6, 'GB': 6, 'Gb': 6,
+      'G': 7, 'G#': 8, 'AB': 8, 'Ab': 8,
+      'A': 9, 'A#': 10, 'BB': 10, 'Bb': 10,
+      'B': 11, 'CB': 11, 'B#': 0
+    };
+
+    function isChordNotation(str) {
+      return /^[A-G][#b]?(?:m|min|maj|dim|aug|sus|add|M)?\d*(?:[#b\d+-]+)?(?:\/[A-G][#b]?)?$/i.test(str.trim());
+    }
+
+    function transposeNoteName(note, semitones, preferFlats) {
+      const idx = NOTE_TO_INDEX[note];
+      if (idx === undefined) return note;
+      let target = (idx + semitones) % 12;
+      if (target < 0) target += 12;
+      return preferFlats ? FLAT_SCALE[target] : SHARP_SCALE[target];
+    }
+
+    function transposeChord(chordText, semitones) {
+      if (!semitones || semitones === 0) return chordText;
+      const match = chordText.match(/^([A-G][#b]?)(.*?)(\/([A-G][#b]?))?$/i);
+      if (!match) return chordText;
+
+      const root = match[1];
+      const quality = match[2] || '';
+      const bass = match[4];
+      const preferFlats = chordText.includes('b');
+
+      const newRoot = transposeNoteName(root, semitones, preferFlats);
+      let newBass = '';
+      if (bass) newBass = '/' + transposeNoteName(bass, semitones, preferFlats);
+      return newRoot + quality + newBass;
+    }
+
+    function adjustTranspose(delta) {
+      if (currentFileType !== 'txt') return;
+      currentTransposeSemitones += delta;
+      updateTransposeUI();
+      renderCurrentTxtWithChords(true);
+    }
+
+    function resetTranspose() {
+      if (currentFileType !== 'txt') return;
+      currentTransposeSemitones = 0;
+      updateTransposeUI();
+      renderCurrentTxtWithChords(true);
+    }
+
+    function updateTransposeUI() {
+      if (currentTransposeSemitones === 0) transposeDisplay.textContent = '0';
+      else if (currentTransposeSemitones > 0) transposeDisplay.textContent = `+${currentTransposeSemitones}`;
+      else transposeDisplay.textContent = `${currentTransposeSemitones}`;
+    }
+
+    // ---------- TXT : RENDU ----------
+    function renderCurrentTxtWithChords(keepPosition) {
+      txtContent.innerHTML = '';
+      if (!currentTxtRawContent) { paginateTxt(false); return; }
+
+      const stanzas = currentTxtRawContent.split(/\r?\n\s*\r?\n/);
+
+      stanzas.forEach(stanza => {
+        const stanzaDiv = document.createElement('div');
+        stanzaDiv.className = 'txt-stanza';
+
+        const lines = stanza.split(/\r?\n/);
+        lines.forEach((line, lIdx) => {
+          const lineSpan = document.createElement('span');
+          renderLineWithChords(line, lineSpan);
+          stanzaDiv.appendChild(lineSpan);
+          if (lIdx < lines.length - 1) stanzaDiv.appendChild(document.createElement('br'));
+        });
+
+        txtContent.appendChild(stanzaDiv);
+      });
+
+      txtContainer.style.fontSize = `${currentTxtFontSize}px`;
+      txtContainer.classList.toggle('hide-chords', !isChordsVisible);
+      paginateTxt(!!keepPosition);
+    }
+
+    function renderLineWithChords(line, container) {
+      const tokens = line.split(/(\([^)]+\))/g);
+
+      for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i];
+
+        if (token.startsWith('(') && token.endsWith(')')) {
+          const inner = token.slice(1, -1).trim();
+
+          if (isChordNotation(inner)) {
+            const transposed = transposeChord(inner, currentTransposeSemitones);
+
+            let lyricPart = '\u00A0';
+            if (i + 1 < tokens.length && !tokens[i + 1].startsWith('(')) {
+              const nextText = tokens[i + 1];
+              const wordMatch = nextText.match(/^(\S+\s*)/);
+              if (wordMatch) {
+                lyricPart = wordMatch[1];
+                tokens[i + 1] = nextText.slice(wordMatch[1].length);
+              }
+            }
+
+            const unit = document.createElement('span');
+            unit.className = 'chord-unit';
+
+            const chordEl = document.createElement('span');
+            chordEl.className = 'chord-name';
+            chordEl.textContent = transposed;
+
+            const lyricEl = document.createElement('span');
+            lyricEl.className = 'chord-lyric';
+            lyricEl.textContent = lyricPart;
+
+            unit.appendChild(chordEl);
+            unit.appendChild(lyricEl);
+            container.appendChild(unit);
+            continue;
+          }
+        }
+
+        if (token) container.appendChild(document.createTextNode(token));
+      }
+    }
+
+    // ---------- TXT : PAGINATION ----------
+    function paginateTxt(keepPosition) {
+      if (currentFileType !== 'txt') return;
+
+      const ratio = (keepPosition && txtPageCount > 0) ? txtPage / txtPageCount : 0;
+
+      const cs = getComputedStyle(txtContainer);
+      const W = Math.floor(txtContainer.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
+      const H = Math.floor(txtContainer.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom));
+      if (W <= 0 || H <= 0) return;
+
+      const cols = isTwoColumns ? 2 : 1;
+      const gap = cols === 2 ? 36 : 0;
+
+      txtClip.style.width = `${W}px`;
+      txtClip.style.height = `${H}px`;
+      txtContent.style.width = `${W}px`;
+      txtContent.style.height = `${H}px`;
+      txtContent.style.columnCount = String(cols);
+      txtContent.style.columnGap = `${gap}px`;
+      txtContent.style.transform = 'translateX(0)';
+
+      txtStride = W + gap;
+      const totalWidth = txtContent.scrollWidth;
+      txtPageCount = Math.max(1, Math.ceil((totalWidth + gap - 0.5) / txtStride));
+      txtPage = Math.min(txtPageCount - 1, Math.round(ratio * txtPageCount));
+      applyTxtPage();
+    }
+
+    function applyTxtPage() {
+      txtContent.style.transform = `translateX(${-txtPage * txtStride}px)`;
+      updateCounter();
+    }
+
+    // ---------- PAGINATION GÉNÉRALE ----------
+    function goToPage(delta) {
+      if (currentFileType === 'txt') {
+        const target = txtPage + delta;
+        if (target < 0 || target >= txtPageCount) return;
+        txtPage = target;
+        applyTxtPage();
+      } else if (currentFileType === 'pdf') {
+        const target = pdfPageIndex + delta;
+        if (target < 0 || target >= pdfNumPages) return;
+        pdfPageIndex = target;
+        updateCounter();
+        renderPdfPage(delta > 0 ? 'top' : 'bottom');
+      }
+    }
+
+    function parseSignatureFromText(text) {
+      const pattern = /\b([2-9]|12)[\/_-]([248])\b/;
+      const match = text.match(pattern);
+      if (match) {
+        const top = parseInt(match[1], 10);
+        const bottom = parseInt(match[2], 10);
+        return { top, bottom, name: `${top}/${bottom}` };
+      }
+      return null;
+    }
+
+    function toggleColumns() {
+      if (currentFileType !== 'txt') return;
+      isTwoColumns = !isTwoColumns;
+      txtContainer.classList.toggle('two-columns', isTwoColumns);
+      columnsBtn.textContent = isTwoColumns ? '2 Col' : '1 Col';
+      columnsBtn.classList.toggle('active', isTwoColumns);
+      paginateTxt(true);
+    }
+
+    function adjustZoom(direction) {
+      if (currentFileType === 'txt') {
+        currentTxtFontSize = Math.min(Math.max(currentTxtFontSize + (direction * 2), 14), 54);
+        txtContainer.style.fontSize = `${currentTxtFontSize}px`;
+        paginateTxt(true);
+      } else if (currentFileType === 'pdf') {
+        currentPdfZoom = Math.min(Math.max(currentPdfZoom + (direction * 0.1), 0.7), 2.2);
+        currentPdfZoom = Math.round(currentPdfZoom * 10) / 10;
+        renderPdfPage('keep');
+      }
+    }
+
+    function toggleCrop() {
+      if (currentFileType !== 'pdf') return;
+      isCropEnabled = !isCropEnabled;
+      cropBtn.classList.toggle('active', isCropEnabled);
+      renderPdfPage('keep');
+    }
+
+    function toggleTheme() {
+      isDarkTheme = !isDarkTheme;
+      themeBtn.textContent = isDarkTheme ? '🌙' : '☀';
+      themeBtn.classList.toggle('active', isDarkTheme);
+      pdfContainer.classList.toggle('dark-theme', isDarkTheme);
+      txtContainer.classList.toggle('light-theme', !isDarkTheme);
+    }
+
+    // ---------- BIBLIOTHÈQUE HORS-LIGNE (IndexedDB) ----------
+    // 'files' : contenu des fichiers (clé = position dans la liste)
+    // 'meta'  : liste des noms ('playlist') et dernier morceau ouvert ('lastIndex')
+    const DB_NAME = 'lecteur-partitions';
+    let dbPromise = null;
+    let libraryPersisted = false;
+
+    function openDb() {
+      if (!dbPromise) {
+        dbPromise = new Promise((resolve, reject) => {
+          const req = indexedDB.open(DB_NAME, 1);
+          req.onupgradeneeded = () => {
+            req.result.createObjectStore('files');
+            req.result.createObjectStore('meta');
+          };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+      }
+      return dbPromise;
+    }
+
+    function idb(storeName, mode, action) {
+      return openDb().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, mode);
+        const req = action(tx.objectStore(storeName));
+        tx.oncomplete = () => resolve(req ? req.result : undefined);
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      }));
+    }
+
+    // Objet léger qui se comporte comme un File mais lit la base à la demande
+    function makeStoredFile(name, order) {
+      const read = async () => {
+        const rec = await idb('files', 'readonly', s => s.get(order));
+        if (!rec) throw new Error('Fichier absent de la bibliothèque : ré-importez vos partitions.');
+        return rec.data;
+      };
+      return {
+        name,
+        arrayBuffer: read,
+        text: async () => new TextDecoder('utf-8').decode(await read())
+      };
+    }
+
+    async function saveLibrary(files) {
+      await idb('files', 'readwrite', s => s.clear());
+      await idb('meta', 'readwrite', s => s.delete('playlist'));
+      const names = [];
+      for (let i = 0; i < files.length; i++) {
+        fileCounter.textContent = `Import ${i + 1}/${files.length}`;
+        const data = await files[i].arrayBuffer();
+        await idb('files', 'readwrite', s => s.put({ data }, i));
+        names.push(files[i].name);
+      }
+      await idb('meta', 'readwrite', s => s.put(names, 'playlist'));
+      await idb('meta', 'readwrite', s => s.put(0, 'lastIndex'));
+    }
+
+    async function restoreLibrary() {
+      try {
+        const names = await idb('meta', 'readonly', s => s.get('playlist'));
+        if (!names || names.length === 0) return;
+        const last = await idb('meta', 'readonly', s => s.get('lastIndex'));
+        pdfPlaylist = names.map((name, order) => makeStoredFile(name, order));
+        libraryPersisted = true;
+        currentIndex = (Number.isInteger(last) && last >= 0 && last < names.length) ? last : 0;
+        loadCurrentDocument();
+      } catch (err) {
+        console.warn('Restauration impossible :', err);
+      }
+    }
+
+    async function handleFilesReceived(fileList) {
+      // Copie immédiate : le champ fichier est vidé juste après l'appel
+      const files = Array.from(fileList).filter(f => {
+        const name = f.name.toLowerCase();
+        return name.endsWith('.pdf') || name.endsWith('.txt');
+      });
+      if (files.length === 0) return;
+
+      files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+      if (pdfPlaylist.length > 0 &&
+          !confirm(`Remplacer la bibliothèque actuelle (${pdfPlaylist.length} fichiers) par ces ${files.length} fichiers ?`)) {
+        return;
+      }
+
+      try {
+        await saveLibrary(files);
+        pdfPlaylist = files.map((f, i) => makeStoredFile(f.name, i));
+        libraryPersisted = true;
+      } catch (err) {
+        console.error('Enregistrement impossible :', err);
+        pdfPlaylist = files;
+        libraryPersisted = false;
+        alert("Enregistrement hors-ligne impossible (espace insuffisant ?). Les fichiers restent utilisables jusqu'à la fermeture de l'application.");
+      }
+
+      currentIndex = 0;
+      loadCurrentDocument();
+    }
+
+    folderInput.addEventListener('change', (e) => { handleFilesReceived(e.target.files); e.target.value = ''; });
+    fileInput.addEventListener('change', (e) => { handleFilesReceived(e.target.files); e.target.value = ''; });
+
+    function navigateFile(direction) {
+      const target = currentIndex + direction;
+      if (target >= 0 && target < pdfPlaylist.length) {
+        currentIndex = target;
+        loadCurrentDocument();
+      }
+    }
+
+    function parseTempoFromFileName(filename) {
+      const match = filename.match(/\bBPM[-_\s]?([0-9]{2,3})\b/i);
+      if (match && match[1]) {
+        const val = parseInt(match[1], 10);
+        if (val >= 35 && val <= 240) return val;
+      }
+      return null;
+    }
+
+    function showError(message) {
+      emptyStateText.textContent = message;
+      emptyState.style.display = '';
+      pdfContainer.style.display = 'none';
+      txtContainer.style.display = 'none';
+    }
+
+    async function releasePdf() {
+      renderToken++;
+      if (currentRenderTask) {
+        try { currentRenderTask.cancel(); } catch (e) {}
+        currentRenderTask = null;
+      }
+      freeCanvases(pdfContainer);
+      pdfContainer.replaceChildren();
+      const doc = currentPdfDoc;
+      currentPdfDoc = null;
+      pdfNumPages = 0;
+      pdfPageIndex = 0;
+      if (doc) { try { await doc.destroy(); } catch (e) {} }
+    }
+
+    function freeCanvases(root) {
+      root.querySelectorAll('canvas').forEach(c => { c.width = 0; c.height = 0; });
+    }
+
+    async function loadCurrentDocument() {
+      if (currentIndex < 0 || currentIndex >= pdfPlaylist.length) return;
+
+      const token = ++loadToken;
+      const file = pdfPlaylist[currentIndex];
+      if (libraryPersisted) idb('meta', 'readwrite', s => s.put(currentIndex, 'lastIndex')).catch(() => {});
+
+      prevBtn.disabled = (currentIndex === 0);
+      nextBtn.disabled = (currentIndex === pdfPlaylist.length - 1);
+
+      setTempoLed(false);
+      emptyState.style.display = 'none';
+
+      const filenameTempo = parseTempoFromFileName(file.name);
+      const filenameSig = parseSignatureFromText(file.name);
+
+      let tempoFound = false;
+
+      setSignature(filenameSig ? filenameSig : MANUAL_SIGNATURES[0]);
+
+      if (filenameTempo) {
+        setTempoLed(true);
+        updateBpm(filenameTempo);
+        autoStartMetronome();
+        tempoFound = true;
+      }
+
+      const isTxt = file.name.toLowerCase().endsWith('.txt');
+
+      if (isTxt) {
+        await releasePdf();
+        if (token !== loadToken) return;
+
+        currentFileType = 'txt';
+        txtPage = 0;
+        txtPageCount = 1;
+        updateCounter();
+
+        columnsBtn.disabled = false;
+        chordsToggleBtn.disabled = false;
+        cropBtn.disabled = true;
+        transposeRow.classList.remove('disabled');
+
+        pdfContainer.style.display = 'none';
+        txtContainer.style.display = 'block';
+
+        currentTransposeSemitones = 0;
+        updateTransposeUI();
+
+        await loadTxtFile(file, token, tempoFound, !filenameSig);
+      } else {
+        await releasePdf();
+        if (token !== loadToken) return;
+
+        currentFileType = 'pdf';
+        updateCounter();
+
+        columnsBtn.disabled = true;
+        chordsToggleBtn.disabled = true;
+        cropBtn.disabled = false;
+        transposeRow.classList.add('disabled');
+
+        txtContainer.style.display = 'none';
+        pdfContainer.style.display = 'flex';
+
+        await loadPdfFile(file, token, tempoFound, !filenameSig);
+      }
+    }
+
+    // ---------- TXT ----------
+    async function loadTxtFile(file, token, tempoAlreadyFound, searchSignature) {
+      try {
+        const text = await file.text();
+        if (token !== loadToken) return;
+        currentTxtRawContent = text;
+        renderCurrentTxtWithChords(false);
+
+        const headerText = currentTxtRawContent.split(/\r?\n/).slice(0, 5).join('\n');
+
+        if (searchSignature) {
+          const sig = parseSignatureFromText(headerText);
+          if (sig) setSignature(sig);
+        }
+
+        if (!tempoAlreadyFound) {
+          const detectedTempo = parseTempoFromText(headerText);
+          if (detectedTempo) {
+            setTempoLed(true);
+            updateBpm(detectedTempo);
+            autoStartMetronome();
+          } else {
+            setTempoLed(false);
+          }
+        }
+      } catch (err) {
+        console.error("Erreur TXT:", err);
+        if (token === loadToken) showError("Impossible de lire ce fichier texte.");
+      }
+    }
+
+    // ---------- PDF ----------
+    async function loadPdfFile(file, token, tempoAlreadyFound, searchSignature) {
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        if (token !== loadToken) return;
+
+        const doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        if (token !== loadToken) { doc.destroy(); return; }
+
+        currentPdfDoc = doc;
+        pdfNumPages = doc.numPages;
+        pdfPageIndex = 0;
+        updateCounter();
+
+        if (!tempoAlreadyFound || searchSignature) {
+          const firstPage = await doc.getPage(1);
+          await analyzePdfPageHeader(firstPage, tempoAlreadyFound, searchSignature);
+          if (token !== loadToken) return;
+        }
+
+        await renderPdfPage('top');
+      } catch (err) {
+        console.error("Erreur PDF:", err);
+        if (token === loadToken) showError("Impossible de lire ce PDF.");
+      }
+    }
+
+    async function analyzePdfPageHeader(page, tempoAlreadyFound, searchSignature) {
+      const textContent = await page.getTextContent();
+      if (!textContent.items || textContent.items.length === 0) return;
+
+      const items = textContent.items.map(item => ({
+        text: item.str,
+        y: Math.round(item.transform[5])
+      })).sort((a, b) => b.y - a.y);
+
+      const lines = [];
+      let currentLine = [];
+      let currentY = null;
+
+      for (const item of items) {
+        if (!item.text.trim()) continue;
+        if (currentY === null || Math.abs(item.y - currentY) <= 6) {
+          currentLine.push(item.text);
+          if (currentY === null) currentY = item.y;
+        } else {
+          lines.push(currentLine.join(" "));
+          currentLine = [item.text];
+          currentY = item.y;
+        }
+        if (lines.length >= 5) break;
+      }
+      if (lines.length < 5 && currentLine.length > 0) lines.push(currentLine.join(" "));
+      const headerText = lines.join("\n");
+
+      if (searchSignature) {
+        const sig = parseSignatureFromText(headerText);
+        if (sig) setSignature(sig);
+      }
+
+      if (!tempoAlreadyFound) {
+        const detectedTempo = parseTempoFromText(headerText);
+        if (detectedTempo) {
+          setTempoLed(true);
+          updateBpm(detectedTempo);
+          autoStartMetronome();
+        } else {
+          setTempoLed(false);
+        }
+      }
+    }
+
+    // Rognage précis par analyse des pixels
+    async function getCropBox(page, doc, pageIdx) {
+      let cache = cropCaches.get(doc);
+      if (!cache) { cache = new Map(); cropCaches.set(doc, cache); }
+      if (cache.has(pageIdx)) return cache.get(pageIdx);
+
+      const vp1 = page.getViewport({ scale: 1 });
+      const s = Math.min(1.5, 1600 / Math.max(vp1.width, vp1.height));
+      const vp = page.getViewport({ scale: s });
+      const w = Math.max(1, Math.ceil(vp.width));
+      const h = Math.max(1, Math.ceil(vp.height));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, w, h);
+
+      let box = null;
+      try {
+        await page.render({ canvasContext: ctx, viewport: vp, background: '#ffffff' }).promise;
+        const data = ctx.getImageData(0, 0, w, h).data;
+        const rowCount = new Uint16Array(h);
+        const colCount = new Uint16Array(w);
+
+        for (let y = 0; y < h; y++) {
+          let o = y * w * 4;
+          for (let x = 0; x < w; x++, o += 4) {
+            if ((data[o] + data[o + 1] + data[o + 2]) < 705) {
+              rowCount[y]++;
+              colCount[x]++;
+            }
+          }
+        }
+
+        const MIN = 2;
+        let top = 0, bottom = h - 1, left = 0, right = w - 1;
+        while (top < h && rowCount[top] < MIN) top++;
+        while (bottom > top && rowCount[bottom] < MIN) bottom--;
+        while (left < w && colCount[left] < MIN) left++;
+        while (right > left && colCount[right] < MIN) right--;
+
+        if (top < h && left < w && bottom >= top && right >= left) {
+          const pad = 8;
+          const x = Math.max(0, left / s - pad);
+          const y = Math.max(0, top / s - pad);
+          const x2 = Math.min(vp1.width, (right + 1) / s + pad);
+          const y2 = Math.min(vp1.height, (bottom + 1) / s + pad);
+          box = { x, y, width: x2 - x, height: y2 - y };
+        }
+      } catch (e) {
+        console.warn("Crop impossible:", e);
+      }
+
+      canvas.width = 0;
+      canvas.height = 0;
+      cache.set(pageIdx, box);
+      return box;
+    }
+
+    async function renderPdfPage(scrollTo = 'top') {
+      if (!currentPdfDoc) return;
+
+      const myToken = ++renderToken;
+      if (currentRenderTask) {
+        try { currentRenderTask.cancel(); } catch (e) {}
+        currentRenderTask = null;
+      }
+
+      const doc = currentPdfDoc;
+      const idx = pdfPageIndex;
+      let canvas = null;
+
+      try {
+        const page = await doc.getPage(idx + 1);
+        if (myToken !== renderToken) return;
+
+        const vp1 = page.getViewport({ scale: 1 });
+        let box = { x: 0, y: 0, width: vp1.width, height: vp1.height };
+
+        if (isCropEnabled) {
+          const b = await getCropBox(page, doc, idx);
+          if (myToken !== renderToken) return;
+          if (b) box = b;
+        }
+
+        const paneW = viewerPane.clientWidth;
+        const paneH = viewerPane.clientHeight;
+        const fit = Math.min(paneW / box.width, paneH / box.height);
+        const cssScale = fit * currentPdfZoom;
+
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        let renderScale = cssScale * dpr;
+        const pixels = box.width * box.height * renderScale * renderScale;
+        if (pixels > MAX_CANVAS_PIXELS) renderScale *= Math.sqrt(MAX_CANVAS_PIXELS / pixels);
+
+        canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(box.width * renderScale));
+        canvas.height = Math.max(1, Math.round(box.height * renderScale));
+        const ctx = canvas.getContext('2d');
+
+        const task = page.render({
+          canvasContext: ctx,
+          viewport: page.getViewport({ scale: renderScale }),
+          transform: [1, 0, 0, 1, -box.x * renderScale, -box.y * renderScale],
+          background: '#ffffff'
+        });
+        currentRenderTask = task;
+        await task.promise;
+        if (currentRenderTask === task) currentRenderTask = null;
+
+        if (myToken !== renderToken) { canvas.width = 0; canvas.height = 0; return; }
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'pdf-page-wrapper';
+        wrapper.style.width = `${box.width * cssScale}px`;
+        wrapper.style.height = `${box.height * cssScale}px`;
+        wrapper.appendChild(canvas);
+
+        freeCanvases(pdfContainer);
+        pdfContainer.replaceChildren(wrapper);
+        page.cleanup();
+
+        if (scrollTo === 'top') viewerPane.scrollTop = 0;
+        else if (scrollTo === 'bottom') viewerPane.scrollTop = viewerPane.scrollHeight;
+      } catch (err) {
+        if (canvas) { canvas.width = 0; canvas.height = 0; }
+        if (err && err.name === 'RenderingCancelledException') return;
+        console.error("Erreur rendu PDF:", err);
+      }
+    }
+
+    function parseTempoFromText(text) {
+      const patterns = [
+        /(?:♩|♪|q|\bBPM\b|\bTempo\b|\bM\.?M\.?)\s*(?:=|:|\s)\s*([0-9]{2,3})/i,
+        /\b([0-9]{2,3})\s*BPM\b/i,
+        /(?:Allegro|Andante|Adagio|Presto|Moderato|Largo|Vivace)\s*(?:=|:|\(|\s)?\s*([0-9]{2,3})/i,
+        /=\s*([0-9]{2,3})/
+      ];
+
+      for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match && match[1]) {
+          const val = parseInt(match[1], 10);
+          if (val >= 35 && val <= 240) return val;
+        }
+      }
+      return null;
+    }
+
+    function setTempoLed(isFound) {
+      tempoLed.classList.toggle('found', isFound);
+    }
+
+    // ---------- MODAL ----------
+    function openFileListModal() {
+      playlistUl.innerHTML = '';
+      modalTitle.textContent = `Fichiers chargés (${pdfPlaylist.length})`;
+
+      if (pdfPlaylist.length === 0) {
+        const li = document.createElement('li');
+        li.style.cssText = 'color: var(--text-muted); text-align: center; padding: 2rem;';
+        li.textContent = 'Aucun fichier chargé pour le moment.';
+        playlistUl.appendChild(li);
+      } else {
+        pdfPlaylist.forEach((file, idx) => {
+          const li = document.createElement('li');
+          li.className = `playlist-item ${idx === currentIndex ? 'active' : ''}`;
+          const isTxt = file.name.toLowerCase().endsWith('.txt');
+
+          const indexEl = document.createElement('span');
+          indexEl.className = 'item-index';
+          indexEl.textContent = `${idx + 1}.`;
+
+          const typeEl = document.createElement('span');
+          typeEl.style.cssText = 'opacity: 0.6; font-size: 0.85rem;';
+          typeEl.textContent = isTxt ? 'TXT' : 'PDF';
+
+          const nameEl = document.createElement('span');
+          nameEl.className = 'item-name';
+          nameEl.textContent = file.name;
+
+          li.append(indexEl, typeEl, nameEl);
+          if (idx === currentIndex) {
+            const playEl = document.createElement('span');
+            playEl.textContent = '▶';
+            li.appendChild(playEl);
+          }
+
+          li.onclick = () => {
+            currentIndex = idx;
+            loadCurrentDocument();
+            closeFileListModal();
+          };
+          playlistUl.appendChild(li);
+        });
+      }
+
+      fileModal.classList.add('open');
+    }
+
+    function closeFileListModal() {
+      fileModal.classList.remove('open');
+    }
+
+    function handleModalOverlayClick(e) {
+      if (e.target === fileModal) closeFileListModal();
+    }
+
+    // ---------- MÉTRONOME ----------
+    let bpm = 90;
+    let isRunning = false;
+    let isAudioOn = false;
+
+    let audioCtx = null;
+    let currentBeatInMeasure = 0;
+    let nextNoteTime = 0.0;
+    let timerID = null;
+    const LOOKAHEAD_INTERVAL = 25.0;
+    const SCHEDULE_AHEAD_TIME = 0.1;
+    const pendingTimeouts = new Set();
+
+    const soundBtn = document.getElementById('soundBtn');
+    const bpmValueEl = document.getElementById('bpmValue');
+    const playBtn = document.getElementById('playBtn');
