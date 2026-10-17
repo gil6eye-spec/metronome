@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -5,7 +6,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Lecteur Partition & Métronome iPad</title>
 
-  <!-- PWA -->
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#0c0e14">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -16,6 +16,27 @@
 
   <!-- PDF.js en local (plus de CDN) -->
   <script src="vendor/pdf.min.js"></script>
+
+  <!-- BANDEAU D'ERREUR (diagnostic) : affiche toute erreur en rouge en haut de l'écran -->
+  <script>
+  (function () {
+    function banner(msg) {
+      var d = document.createElement('div');
+      d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999;background:#b00020;color:#fff;font:14px sans-serif;padding:10px;white-space:pre-wrap';
+      d.textContent = msg;
+      (document.body || document.documentElement).appendChild(d);
+    }
+    window.addEventListener('error', function (e) {
+      banner('Erreur : ' + (e.message || '') + (e.filename ? '\n' + e.filename + ':' + e.lineno : ''));
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      banner('Erreur (promesse) : ' + ((e.reason && e.reason.message) || e.reason));
+    });
+    if (typeof pdfjsLib === 'undefined') {
+      banner('PDF.js introuvable : vérifiez le dossier vendor/ (pdf.min.js).');
+    }
+  })();
+  </script>
 
   <style>
     :root {
@@ -68,7 +89,6 @@
       overflow: hidden;
     }
 
-    /* ZONE AFFICHAGE PRINCIPALE */
     .viewer-pane {
       flex: 1;
       height: 100vh;
@@ -82,7 +102,6 @@
       -webkit-overflow-scrolling: touch;
     }
 
-    /* Conteneur PDF : une seule page affichée à la fois */
     .pdf-pages-container {
       display: none;
       flex-direction: column;
@@ -106,7 +125,6 @@
       height: auto;
     }
 
-    /* VUE FICHIER TXT PAGINÉE */
     .txt-viewer-container {
       display: none;
       flex: 1;
@@ -156,7 +174,6 @@
       overflow-wrap: break-word;
     }
 
-    /* ACCORDS FLOTTANTS COMPACTS */
     .chord-unit {
       display: inline-flex;
       flex-direction: column;
@@ -218,7 +235,6 @@
       line-height: 1.4;
     }
 
-    /* BANDEAU LATÉRAL ULTRA-COMPACT (110px) */
     .compact-sidebar {
       width: 110px;
       height: 100vh;
@@ -733,7 +749,6 @@
 </head>
 <body>
 
-  <!-- 1. ZONE AFFICHAGE -->
   <main class="viewer-pane" id="pdfTouchArea">
     <div class="empty-state" id="emptyState">
       <div class="empty-state-icon">🎼</div>
@@ -741,12 +756,11 @@
       <button class="btn-step" onclick="document.getElementById('folderInput').click()" style="width: auto; padding: 10px 18px; font-size: 0.95rem; margin: auto; background: var(--accent);">
         📁 Ouvrir un dossier
       </button>
+      <div style="margin-top: 1rem; font-size: 0.7rem; color: var(--text-muted);">v2</div>
     </div>
 
-    <!-- PDF : une page à la fois -->
     <div class="pdf-pages-container dark-theme" id="pdfContainer"></div>
 
-    <!-- TXT paginé -->
     <div class="txt-viewer-container two-columns" id="txtContainer">
       <div class="txt-clip" id="txtClip">
         <div class="txt-content" id="txtContent"></div>
@@ -754,7 +768,6 @@
     </div>
   </main>
 
-  <!-- 2. BANDEAU LATÉRAL -->
   <aside class="compact-sidebar">
 
     <div class="section-metronome">
@@ -827,7 +840,6 @@
 
   </aside>
 
-  <!-- 3. MODAL LISTE -->
   <div class="modal-overlay" id="fileModal" onclick="handleModalOverlayClick(event)">
     <div class="modal-card">
       <div class="modal-header">
@@ -854,7 +866,6 @@
     let currentFileType = null;
     let loadToken = 0;
 
-    // PDF
     let currentPdfDoc = null;
     let pdfNumPages = 0;
     let pdfPageIndex = 0;
@@ -864,7 +875,6 @@
     const cropCaches = new WeakMap();
     const MAX_CANVAS_PIXELS = 10e6;
 
-    // TXT
     let currentTxtFontSize = 22;
     let currentTxtRawContent = "";
     let currentTransposeSemitones = 0;
@@ -1224,8 +1234,6 @@
     }
 
     // ---------- BIBLIOTHÈQUE HORS-LIGNE (IndexedDB) ----------
-    // 'files' : contenu des fichiers (clé = position dans la liste)
-    // 'meta'  : liste des noms ('playlist') et dernier morceau ouvert ('lastIndex')
     const DB_NAME = 'lecteur-partitions';
     let dbPromise = null;
     let libraryPersisted = false;
@@ -1255,7 +1263,6 @@
       }));
     }
 
-    // Objet léger qui se comporte comme un File mais lit la base à la demande
     function makeStoredFile(name, order) {
       const read = async () => {
         const rec = await idb('files', 'readonly', s => s.get(order));
@@ -1274,7 +1281,6 @@
       await idb('meta', 'readwrite', s => s.delete('playlist'));
       const names = [];
       for (let i = 0; i < files.length; i++) {
-        fileCounter.textContent = `Import ${i + 1}/${files.length}`;
         const data = await files[i].arrayBuffer();
         await idb('files', 'readwrite', s => s.put({ data }, i));
         names.push(files[i].name);
@@ -1298,7 +1304,7 @@
     }
 
     async function handleFilesReceived(fileList) {
-      // Copie immédiate : le champ fichier est vidé juste après l'appel
+      // Copie immédiate de la liste
       const files = Array.from(fileList).filter(f => {
         const name = f.name.toLowerCase();
         return name.endsWith('.pdf') || name.endsWith('.txt');
@@ -1312,23 +1318,34 @@
         return;
       }
 
-      try {
-        await saveLibrary(files);
-        pdfPlaylist = files.map((f, i) => makeStoredFile(f.name, i));
-        libraryPersisted = true;
-      } catch (err) {
-        console.error('Enregistrement impossible :', err);
-        pdfPlaylist = files;
-        libraryPersisted = false;
-        alert("Enregistrement hors-ligne impossible (espace insuffisant ?). Les fichiers restent utilisables jusqu'à la fermeture de l'application.");
-      }
-
+      // 1) Affichage IMMÉDIAT depuis la mémoire, sans attendre l'enregistrement
+      pdfPlaylist = files;
+      libraryPersisted = false;
       currentIndex = 0;
       loadCurrentDocument();
+
+      // 2) Enregistrement hors-ligne en arrière-plan
+      try {
+        await saveLibrary(files);
+        libraryPersisted = true;
+        updateCounter();
+        idb('meta', 'readwrite', s => s.put(currentIndex, 'lastIndex')).catch(() => {});
+      } catch (err) {
+        console.error('Enregistrement impossible :', err);
+        updateCounter();
+        alert("Enregistrement hors-ligne impossible (espace insuffisant ?). Les fichiers restent utilisables jusqu'à la fermeture de l'application.");
+      }
     }
 
-    folderInput.addEventListener('change', (e) => { handleFilesReceived(e.target.files); e.target.value = ''; });
-    fileInput.addEventListener('change', (e) => { handleFilesReceived(e.target.files); e.target.value = ''; });
+    // Le champ de sélection n'est vidé qu'APRÈS la fin de la lecture des fichiers
+    folderInput.addEventListener('change', (e) => {
+      const input = e.target;
+      handleFilesReceived(input.files).finally(() => { input.value = ''; });
+    });
+    fileInput.addEventListener('change', (e) => {
+      const input = e.target;
+      handleFilesReceived(input.files).finally(() => { input.value = ''; });
+    });
 
     function navigateFile(direction) {
       const target = currentIndex + direction;
@@ -1545,7 +1562,6 @@
       }
     }
 
-    // Rognage précis par analyse des pixels
     async function getCropBox(page, doc, pageIdx) {
       let cache = cropCaches.get(doc);
       if (!cache) { cache = new Map(); cropCaches.set(doc, cache); }
@@ -1771,3 +1787,195 @@
     const soundBtn = document.getElementById('soundBtn');
     const bpmValueEl = document.getElementById('bpmValue');
     const playBtn = document.getElementById('playBtn');
+
+    function later(fn, ms) {
+      const id = setTimeout(() => { pendingTimeouts.delete(id); fn(); }, ms);
+      pendingTimeouts.add(id);
+    }
+
+    function clearPendingTimeouts() {
+      pendingTimeouts.forEach(id => clearTimeout(id));
+      pendingTimeouts.clear();
+    }
+
+    function updateBpm(newBpm) {
+      bpm = Math.min(Math.max(newBpm, 35), 240);
+      bpmValueEl.textContent = bpm;
+    }
+
+    function adjustBpm(delta) {
+      updateBpm(bpm + delta);
+    }
+
+    function toggleSound() {
+      isAudioOn = !isAudioOn;
+      soundBtn.textContent = isAudioOn ? '🔊' : '🔇';
+      soundBtn.classList.toggle('active', isAudioOn);
+    }
+
+    function nextNote() {
+      nextNoteTime += 60.0 / bpm;
+      currentBeatInMeasure = (currentBeatInMeasure + 1) % currentSignature.top;
+    }
+
+    function scheduleBeat(rawBeat, time) {
+      if (!audioCtx) return;
+      const beatNumber = rawBeat % currentSignature.top;
+
+      if (isAudioOn) {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        osc.frequency.value = (beatNumber === 0) ? 1050 : 700;
+        osc.type = 'triangle';
+
+        gain.gain.setValueAtTime(0.28, time);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.035);
+
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        osc.start(time);
+        osc.stop(time + 0.035);
+      }
+
+      const delayMs = Math.max(0, (time - audioCtx.currentTime) * 1000);
+      later(() => {
+        if (!isRunning) return;
+        highlightBeatPad(beatNumber);
+      }, delayMs);
+    }
+
+    function highlightBeatPad(beatNumber) {
+      allPadsList.forEach(pad => pad.classList.remove('active-accent', 'active-sub'));
+
+      const targetPad = beatIndexToPad[beatNumber];
+      if (targetPad) {
+        targetPad.classList.add(beatNumber === 0 ? 'active-accent' : 'active-sub');
+        later(() => targetPad.classList.remove('active-accent', 'active-sub'), 130);
+      }
+    }
+
+    function scheduler() {
+      while (nextNoteTime < audioCtx.currentTime + SCHEDULE_AHEAD_TIME) {
+        scheduleBeat(currentBeatInMeasure, nextNoteTime);
+        nextNote();
+      }
+      if (isRunning) timerID = setTimeout(scheduler, LOOKAHEAD_INTERVAL);
+    }
+
+    function startMetronome() {
+      if (isRunning) return;
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+      } catch (e) {
+        console.error("Audio indisponible:", e);
+        return;
+      }
+
+      isRunning = true;
+      playBtn.textContent = '⏸';
+      playBtn.classList.add('running');
+
+      currentBeatInMeasure = 0;
+      nextNoteTime = audioCtx.currentTime + 0.05;
+      scheduler();
+    }
+
+    function stopMetronome() {
+      if (!isRunning) return;
+      isRunning = false;
+      playBtn.textContent = '▶';
+      playBtn.classList.remove('running');
+      if (timerID) clearTimeout(timerID);
+      clearPendingTimeouts();
+      allPadsList.forEach(pad => pad.classList.remove('active-accent', 'active-sub'));
+    }
+
+    function togglePlay() {
+      if (isRunning) stopMetronome();
+      else startMetronome();
+    }
+
+    // ---------- GESTES : balayage VERTICAL uniquement ----------
+    let touchStartY = 0, touchStartX = 0;
+    let swipeValid = false;
+    let startAtTop = true, startAtBottom = true;
+
+    viewerPane.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) { swipeValid = false; return; }
+      swipeValid = true;
+      touchStartX = e.changedTouches[0].screenX;
+      touchStartY = e.changedTouches[0].screenY;
+      startAtTop = viewerPane.scrollTop <= 2;
+      startAtBottom = viewerPane.scrollTop + viewerPane.clientHeight >= viewerPane.scrollHeight - 2;
+    }, { passive: true });
+
+    viewerPane.addEventListener('touchcancel', () => { swipeValid = false; }, { passive: true });
+
+    viewerPane.addEventListener('touchend', (e) => {
+      if (!swipeValid) return;
+      swipeValid = false;
+
+      const diffX = e.changedTouches[0].screenX - touchStartX;
+      const diffY = e.changedTouches[0].screenY - touchStartY;
+
+      if (Math.abs(diffY) > 60 && Math.abs(diffY) > Math.abs(diffX) * 1.5) {
+        if (diffY < 0 && startAtBottom) goToPage(+1);
+        else if (diffY > 0 && startAtTop) goToPage(-1);
+      }
+    }, { passive: true });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && fileModal.classList.contains('open')) closeFileListModal();
+      else if (e.key === 'ArrowDown' || e.key === 'PageDown') goToPage(+1);
+      else if (e.key === 'ArrowUp' || e.key === 'PageUp') goToPage(-1);
+    });
+
+    let resizeTimer = null;
+    let lastW = window.innerWidth, lastH = window.innerHeight;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (window.innerWidth === lastW && Math.abs(window.innerHeight - lastH) < 4) return;
+        lastW = window.innerWidth;
+        lastH = window.innerHeight;
+        if (currentFileType === 'pdf') renderPdfPage('keep');
+        else if (currentFileType === 'txt') paginateTxt(true);
+      }, 200);
+    });
+
+    setupBeatMatrix(currentSignature);
+
+    // ---------- AUDIO : déverrouillage iOS + démarrage auto contrôlé ----------
+    let userGestureDone = false;
+    function unlockAudio() {
+      userGestureDone = true;
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+      } catch (e) {}
+    }
+    ['touchend', 'click', 'keydown'].forEach(ev =>
+      window.addEventListener(ev, unlockAudio, { capture: true, passive: true })
+    );
+
+    function autoStartMetronome() {
+      if (userGestureDone) startMetronome();
+    }
+
+    // ---------- PWA ----------
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(err => console.warn('Service worker :', err));
+      });
+    }
+    if (navigator.storage && navigator.storage.persist) {
+      navigator.storage.persist().catch(() => {});
+    }
+
+    restoreLibrary();
+  </script>
+</body>
+</html>
